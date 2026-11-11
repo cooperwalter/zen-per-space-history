@@ -254,6 +254,15 @@ test("pageUrlsAfter pages through distinct URLs in order, starting after the giv
   assert.deepEqual(second, ["https://example.org/c", "https://example.org/d"]);
 });
 
+test("pageUrlsAfter skips a URL whose most recent visit is at or after the seenBefore cutoff", async () => {
+  const { db } = await makeDb();
+  db.enqueue("page", "https://example.org/old", 1, "", 1000);
+  db.enqueue("page", "https://example.org/fresh", 1, "", 1000);
+  db.enqueue("page", "https://example.org/fresh", 2, "", 9000);
+  await db.flush();
+  assert.deepEqual(await db.pageUrlsAfter("", 10, 5000), ["https://example.org/old"]);
+});
+
 test("deletePages removes every row of each listed URL", async () => {
   const { db, conn } = await makeDb();
   db.enqueue("page", URL_A, 1, "", 1000);
