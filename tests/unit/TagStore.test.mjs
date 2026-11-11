@@ -181,3 +181,11 @@ test("stats reports key counts per index and the known container/Space pairs", (
   assert.equal(stats.terms, 0);
   assert.deepEqual(stats.scopes, [{ userContextId: 1, spaceId: "space-a" }]);
 });
+
+test("keys iterates every key of the requested index and none from the other indexes", () => {
+  const store = makeStore();
+  store.add("page", URL_A, 1, "");
+  store.add("page", "https://example.org/b", 1, "");
+  store.add("origin", "example.org", 1, "");
+  assert.deepEqual([...store.keys("page")], [URL_A, "https://example.org/b"]);
+});

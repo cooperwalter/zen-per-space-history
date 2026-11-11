@@ -238,6 +238,136 @@ test("a history-cleared event deletes every page, origin and term tag from memor
   assert.deepEqual(counts, [0, 0, 0]);
 });
 
+test("removing the last tagged page of a site deletes that site's origin tags from memory and from SQLite", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordVisit({ url: "https://forgotten.example/only", userContextId: 1, spaceId: "", time: 5000 });
+  await control.fireTimers(5000);
+  control.state.placesHandlers.onPageRemoved("https://forgotten.example/only");
+  await settle();
+  await control.fireTimers(2000);
+  await settle();
+  assert.equal(mod.stats().origins, 0);
+  assert.equal(control.rows("SELECT COUNT(*) AS n FROM origin_tags")[0].n, 0);
+});
+
+test("removing one of two tagged pages of a site keeps the site's origin tags", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordVisit({ url: "https://site.example/a", userContextId: 1, spaceId: "" });
+  mod.recordVisit({ url: "https://site.example/b", userContextId: 1, spaceId: "" });
+  control.state.placesHandlers.onPageRemoved("https://site.example/a");
+  await settle();
+  await control.fireTimers(2000);
+  await settle();
+  assert.deepEqual(mod.explain("https://site.example/b").origins["site.example"], [{ userContextId: 1, spaceId: "" }]);
+});
+
+test("removing a site's only page from one container deletes that container's origin tag and keeps the other container's", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordVisit({ url: "https://site.example/work", userContextId: 1, spaceId: "" });
+  mod.recordVisit({ url: "https://site.example/personal", userContextId: 2, spaceId: "" });
+  control.state.placesHandlers.onPageRemoved("https://site.example/work");
+  await settle();
+  await control.fireTimers(2000);
+  await settle();
+  assert.deepEqual(mod.explain("https://site.example/personal").origins["site.example"], [{ userContextId: 2, spaceId: "" }]);
+});
+
+test("a form-history removal deletes tags for terms no longer in form history and keeps terms still there", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordSearch({ term: "alpha zebra", userContextId: 1, spaceId: "", time: 5000 });
+  mod.recordSearch({ term: "bravo yak", userContextId: 1, spaceId: "", time: 5000 });
+  await control.fireTimers(5000);
+  control.state.formHistoryTerms = ["Bravo  Yak"];
+  control.state.formHistoryRemoved();
+  await control.fireTimers(2000);
+  await settle();
+  assert.deepEqual(mod.explain("alpha zebra").term, []);
+  assert.equal(mod.explain("bravo yak").term.length, 1);
+  assert.deepEqual(control.rows("SELECT term FROM search_tags"), [{ term: "bravo yak" }]);
+});
+
+test("removing a search results page keeps its term tag while form history still has the term", async () => {
+  const { mod, control } = await makeRunningMod();
+  const url = "https://search.example/?q=alpha+zebra";
+  mod.recordVisit({ url, userContextId: 1, spaceId: "" });
+  control.state.formHistoryTerms = ["alpha zebra"];
+  control.state.placesHandlers.onPageRemoved(url);
+  await settle();
+  await control.fireTimers(2000);
+  await settle();
+  assert.equal(mod.explain("alpha zebra").term.length, 1);
+});
+
+test("removing a search results page deletes its term tag when form history no longer has the term", async () => {
+  const { mod, control } = await makeRunningMod();
+  const url = "https://search.example/?q=alpha+zebra";
+  mod.recordVisit({ url, userContextId: 1, spaceId: "" });
+  control.state.formHistoryTerms = [];
+  control.state.placesHandlers.onPageRemoved(url);
+  await settle();
+  await control.fireTimers(2000);
+  await settle();
+  assert.deepEqual(mod.explain("alpha zebra").term, []);
+});
+
+test("term tags are left alone when form history cannot be read", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordSearch({ term: "alpha zebra", userContextId: 1, spaceId: "" });
+  control.state.formHistoryTerms = null;
+  control.state.formHistoryRemoved();
+  await control.fireTimers(2000);
+  await settle();
+  assert.equal(mod.explain("alpha zebra").term.length, 1);
+});
+
+test("recordSearch records nothing while form history (browser.formfill.enable) is off", async () => {
+  const { mod, control } = await makeRunningMod();
+  control.state.formHistoryEnabled = false;
+  mod.recordVisit({ url: "https://search.example/?q=alpha+zebra", userContextId: 1, spaceId: "" });
+  assert.equal(mod.stats().terms, 0);
+  assert.equal(mod.stats().pages, 1);
+});
+
+test("gc deletes origin tags that no tagged page backs any more and keeps backed ones", async () => {
+  const { mod, control } = await makeRunningMod();
+  const old = control.state.now - 2 * 60 * 60 * 1000;
+  mod.recordVisit({ url: "https://gone.example/", userContextId: 1, spaceId: "", time: old });
+  mod.recordVisit({ url: "https://kept.example/", userContextId: 1, spaceId: "", time: old });
+  control.state.existingUrls = new Set(["https://kept.example/"]);
+  const summary = await mod.gc();
+  assert.equal(summary.originsRemoved, 2);
+  assert.deepEqual(
+    control.rows("SELECT origin FROM origin_tags ORDER BY origin").map((row) => row.origin),
+    ["https://kept.example", "kept.example"]
+  );
+});
+
+test("gc removes only the unbacked container from a scheme+host origin tag whose bare-host tag is still fully backed", async () => {
+  const { mod, control } = await makeRunningMod();
+  const old = control.state.now - 2 * 60 * 60 * 1000;
+  mod.recordVisit({ url: "https://a.example/p", userContextId: 1, spaceId: "", time: old });
+  mod.recordVisit({ url: "https://a.example/q", userContextId: 2, spaceId: "", time: old });
+  mod.recordVisit({ url: "http://a.example/r", userContextId: 2, spaceId: "", time: old });
+  control.state.existingUrls = new Set(["https://a.example/p", "http://a.example/r"]);
+  await mod.gc();
+  const origins = mod.explain("https://a.example/p").origins;
+  assert.deepEqual(origins["https://a.example"], [{ userContextId: 1, spaceId: "" }]);
+  assert.deepEqual(origins["a.example"], [
+    { userContextId: 1, spaceId: "" },
+    { userContextId: 2, spaceId: "" },
+  ]);
+});
+
+test("gc deletes tags for terms that form history no longer holds", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordSearch({ term: "alpha zebra", userContextId: 1, spaceId: "" });
+  mod.recordSearch({ term: "bravo yak", userContextId: 1, spaceId: "" });
+  control.state.formHistoryTerms = ["bravo yak"];
+  const summary = await mod.gc();
+  assert.equal(summary.termsRemoved, 1);
+  assert.deepEqual(mod.explain("alpha zebra").term, []);
+});
+
 test("deleting a container deletes that container's tags and keeps other containers' tags", async () => {
   const { mod, control } = await makeRunningMod();
   mod.recordVisit({ url: WORK_URL, userContextId: 2, spaceId: "space-b", time: 5000 });
@@ -364,6 +494,7 @@ test("shutdown flushes pending tags, closes the database and removes its observe
   assert.equal(control.state.placesHandlers, null);
   assert.equal(control.state.containerDeleted, null);
   assert.equal(control.state.idleCallback, null);
+  assert.equal(control.state.formHistoryRemoved, null);
   assert.equal(control.state.blockers.length, 0);
 });
 

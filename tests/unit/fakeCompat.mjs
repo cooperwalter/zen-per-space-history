@@ -37,6 +37,9 @@ export function makeFakeCompat(options = {}) {
     urlbar,
     now: options.now ?? 1_000_000_000_000,
     historyEnabled: true,
+    formHistoryEnabled: true,
+    formHistoryTerms: null,
+    formHistoryRemoved: null,
     expireDays: 180,
     connections: [],
     openFailures: options.openFailures ?? 0,
@@ -82,6 +85,7 @@ export function makeFakeCompat(options = {}) {
         };
       },
       historyEnabled: () => state.historyEnabled,
+      formHistoryEnabled: () => state.formHistoryEnabled,
       formHistoryExpireDays: () => state.expireDays,
     },
     db: {
@@ -128,6 +132,18 @@ export function makeFakeCompat(options = {}) {
       },
       async visitedPages() {
         return state.visitedPages;
+      },
+    },
+    formHistory: {
+      observeRemoved(callback) {
+        state.formHistoryRemoved = callback;
+        return () => {
+          state.formHistoryRemoved = null;
+          state.removedObservers++;
+        };
+      },
+      async searchTerms() {
+        return state.formHistoryTerms;
       },
     },
     search: {

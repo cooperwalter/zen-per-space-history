@@ -183,6 +183,23 @@ test("deleteScope for a Space removes that Space's rows and keeps other Spaces' 
   assert.deepEqual(conn.rows("SELECT space_id FROM page_tags"), [{ space_id: "space-b" }]);
 });
 
+test("deleteTags removes exactly the listed key/container/Space rows and leaves the key's other rows", async () => {
+  const { db, conn } = await makeDb();
+  db.enqueue("origin", "example.org", 1, "space-a", 1000);
+  db.enqueue("origin", "example.org", 2, "space-b", 1000);
+  await db.flush();
+  await db.deleteTags("origin", [{ key: "example.org", userContextId: 1, spaceId: "space-a" }]);
+  assert.deepEqual(conn.rows("SELECT user_context_id, space_id FROM origin_tags"), [{ user_context_id: 2, space_id: "space-b" }]);
+});
+
+test("deleteTags discards a still-pending write for a listed row", async () => {
+  const { db, conn } = await makeDb();
+  db.enqueue("origin", "example.org", 1, "space-a", 1000);
+  await db.deleteTags("origin", [{ key: "example.org", userContextId: 1, spaceId: "space-a" }]);
+  await db.flush();
+  assert.equal(conn.rows("SELECT COUNT(*) AS n FROM origin_tags")[0].n, 0);
+});
+
 test("clearAll empties all three tag tables and the pending queue but keeps meta", async () => {
   const { db, conn } = await makeDb();
   db.enqueue("page", URL_A, 1, "", 1000);
