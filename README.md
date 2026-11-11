@@ -21,7 +21,7 @@ This mod is JavaScript that runs with **full browser privileges**. It can read a
 
 History from before the install has no tags. By default it keeps showing everywhere, so nothing disappears on day one. See `untaggedVisibility` and `backfill` below to change that.
 
-Zen ships with "Remember search and form history" turned off. While it is off the browser keeps no search history, so there are no past search terms to filter, and the mod records none.
+Zen ships with "Remember search and form history" turned off, so typed-search suggestions don't appear by default. Past searches can still show up when you search with a specific engine (for example `@google`), because Firefox builds them from search-results pages in history. The mod filters both kinds.
 
 ## Install with fx-autoconfig
 
@@ -73,11 +73,13 @@ Run `selfTest()` after every Zen update. The mod patches one internal method, `Q
 | --- | --- |
 | Forget a page, or a whole site | That page's tags, and the site's tags once no tagged page of it is left |
 | Clear all history | Every tag |
-| Remove a search from search history | That search term's tags |
+| Remove a search from search history and forget its results pages | That search term's tags. A term stays tagged while either still exists, so it never becomes visible in other containers halfway |
 | Delete a container | Every tag for that container |
 | Delete a Space | Every tag recorded in that Space |
 
-A weekly cleanup, run while the computer is idle, also removes tags for pages Firefox has expired, search terms older than `browser.formfill.expire_days`, and the oldest rows beyond 200,000 pages.
+A weekly cleanup, run while the computer is idle, also removes tags for pages Firefox has expired, site and search-term tags that nothing backs any more, and the oldest rows beyond 200,000 pages. Clearing all history also deletes any set-aside copies of a damaged tag database.
+
+Going back, forward or reloading re-tags a page only if Firefox still has it in history.
 
 ## Known limits
 
@@ -85,7 +87,9 @@ A weekly cleanup, run while the computer is idle, also removes tags for pages Fi
 - **Bookmarked sites still autofill.** Firefox labels every autofill result as history, so autofill for a site is filtered by container even when the site is bookmarked. The bookmark row itself always shows.
 - **Deleting a Space or container drops both tags of its visits.** A visit is stored as one container + Space pair. Deleting either side deletes the pair, so those pages become untagged and follow `untaggedVisibility`.
 - **Some searches can't be tagged.** A search is tagged from its results URL, which only works for engines that pass the terms as a URL parameter. Untagged terms follow `untaggedVisibility`.
-- **Space scope reads the most recently focused window.** With two windows in different Spaces this can pick the wrong one in rare cases. Container scope does not have this problem.
+- **A Space removed by Sync keeps its tags.** Zen sends no signal for it. The tags are harmless in container scope; run `forgetScope({ spaceId })` to delete them.
+- **Essentials are shared.** Essentials tabs belong to no Space, so in Space scope the pages you visit in them show in every Space. The same goes for pages added by `backfill` without a `spaceId`.
+- **"Clear last hour" keeps a page's tag** if the page still has older visits, even when the cleared visit was the only one in that container.
 - Private windows are never tagged or filtered. History that arrives through Sync is untagged.
 
 ## Development

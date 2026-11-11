@@ -248,16 +248,6 @@ test("enforceBudget brings a 200,050-row page table down to the 200,000 row budg
   assert.equal(conn.rows("SELECT MIN(last_seen) AS oldest FROM page_tags")[0].oldest, 50);
 });
 
-test("expireTerms deletes search terms last seen before the cutoff and returns them", async () => {
-  const { db, conn } = await makeDb();
-  db.enqueue("term", "old term", 1, "space-a", 1000);
-  db.enqueue("term", "new term", 1, "space-a", 9000);
-  await db.flush();
-  const removed = await db.expireTerms(5000);
-  assert.deepEqual(removed, [{ key: "old term", userContextId: 1, spaceId: "space-a" }]);
-  assert.deepEqual(conn.rows("SELECT term FROM search_tags"), [{ term: "new term" }]);
-});
-
 test("pageUrlsAfter pages through distinct URLs in order, starting after the given URL", async () => {
   const { db } = await makeDb();
   for (const name of ["a", "b", "c", "d", "e"]) {

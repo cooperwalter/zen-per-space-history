@@ -382,10 +382,60 @@ async function main() {
       out.autofillLocInWork = locInWork.results;
       out.autofillMs = { kept: locInPersonal.ms, dropped: locInWork.ms };
       out.typedUrlInPersonal = await query(args[2], personal);
+
+      const spaces = window.gZenWorkspaces;
+      const activeSpace = spaces.getActiveWorkspaceFromCache();
+      const originalContainer = activeSpace.containerTabId;
+      const originalTab = gBrowser.selectedTab;
+      const emptyTab = gBrowser.tabs.find((tab) => tab.hasAttribute("zen-empty-tab"));
+      out.emptyTabFound = !!emptyTab;
+      if (emptyTab) {
+        const normalTab = gBrowser.addTab("about:blank", {
+          triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+        });
+        out.normalTabContainer = normalTab.userContextId;
+        activeSpace.containerTabId = work;
+        gBrowser.selectedTab = emptyTab;
+        out.emptyTabContainer = emptyTab.userContextId;
+        out.spaceContainer = spaces.getCurrentSpaceContainerId();
+        out.workFromEmptyTab = await query("work-only", 0);
+        out.sharedNoContainerFromEmptyTab = await query("untagged-nothing", 0);
+        gBrowser.selectedTab = normalTab;
+        out.workFromNormalTab = await query("work-only", 0);
+        activeSpace.containerTabId = originalContainer;
+        gBrowser.selectedTab = originalTab;
+        gBrowser.removeTab(normalTab);
+      }
+
+      Services.prefs.setBoolPref("browser.formfill.enable", false);
+      await visit(args[4] + "charlie+xray", work);
+      const searchMode = async (searchString, userContextId) => {
+        const { UrlbarQueryContext } = ChromeUtils.importESModule("chrome://browser/content/urlbar/UrlbarQueryContext.mjs");
+        const context = new UrlbarQueryContext({
+          allowAutofill: false,
+          isPrivate: false,
+          maxResults: 20,
+          searchString,
+          userContextId,
+          sapName: "urlbar",
+          searchMode: { engineName: "PSH Test Engine" },
+        });
+        await urlbarManager.ProvidersManager.getInstanceForSap("urlbar").startQuery(context);
+        return context.results.map((result) => ({
+          type: result.type,
+          source: result.source,
+          suggestion: result.payload.suggestion || null,
+          provider: result.providerName,
+        }));
+      };
+      out.charlieTerm = mod().explain("charlie xray").term;
+      out.restyledInWork = await searchMode("cha", work);
+      out.restyledInPersonal = await searchMode("cha", personal);
+      Services.prefs.setBoolPref("browser.formfill.enable", true);
       out.dropped = mod().stats().dropped;
       return out;
       `,
-      [work, personal, workUrl, personalUrl]
+      [work, personal, workUrl, personalUrl, `http://psh-search.test:${port}/search?q=`]
     );
     if (queries.frecencyError) {
       note("frecency recalculation", queries.frecencyError);
@@ -416,6 +466,13 @@ async function main() {
     check("a query whose autofill was dropped finishes without a stall", queries.autofillMs.dropped < queries.autofillMs.kept + 500, `kept ${queries.autofillMs.kept} ms, dropped ${queries.autofillMs.dropped} ms`);
     check("typing the full work URL in Personal still yields a heuristic visit result", queries.typedUrlInPersonal.some((result) => result.heuristic && result.url && result.url.startsWith(workUrl)), JSON.stringify(queries.typedUrlInPersonal.filter((result) => result.heuristic)));
     check("typing the full work URL in Personal shows no history row for it", historyRows(queries.typedUrlInPersonal, workUrl).length === 0);
+    check("Zen's empty tab exists and is a no-container tab", queries.emptyTabFound && queries.emptyTabContainer === 0, `container=${queries.emptyTabContainer}`);
+    check("typing from Zen's empty tab in a Space whose container is Work suggests the work URL", queries.spaceContainer === work && hasUrl(queries.workFromEmptyTab ?? [], workUrl), `space container=${queries.spaceContainer}`);
+    check("typing from a normal no-container tab in that Space does not suggest the work URL", queries.normalTabContainer === 0 && !hasUrl(queries.workFromNormalTab ?? [], workUrl), `tab container=${queries.normalTabContainer}`);
+    const restyled = (results) => results.some((result) => result.type === 2 && result.source === 2 && result.suggestion === "charlie xray");
+    check("with form history off, a search results visit is still tagged with its term", queries.charlieTerm.length === 1 && queries.charlieTerm[0].userContextId === work, JSON.stringify(queries.charlieTerm));
+    check("in engine search mode, a past search restyled from history shows in the container it was searched in", restyled(queries.restyledInWork), JSON.stringify(queries.restyledInWork.map((result) => [result.provider, result.suggestion])));
+    check("in engine search mode, a past search restyled from history is hidden in another container", !restyled(queries.restyledInPersonal), JSON.stringify(queries.restyledInPersonal.map((result) => [result.provider, result.suggestion])));
     note("results dropped so far", String(queries.dropped));
 
     const prefToggle = await run(
@@ -435,9 +492,18 @@ async function main() {
       const untaggedNowhere = await query("untagged-page", work);
       Services.prefs.setStringPref("zen.perSpaceHistory.untaggedVisibility", "everywhere");
       const untaggedEverywhere = await query("untagged-page", work);
-      return { off, on, spaceScope, untaggedNowhere, untaggedEverywhere };
+      const compatModule = ChromeUtils.importESModule("chrome://sine/content/per-space-history/lib/GeckoCompat.sys.mjs");
+      const existing = await compatModule.places.existingUrls([args[3], "http://never-visited.invalid/"]);
+      const backfill = await mod().backfill({ userContextId: work, sinceDays: 1 });
+      const backfilled = mod().explain(args[2]).page;
+      const gc = await mod().gc();
+      const afterGc = mod().explain(args[3]).page;
+      return {
+        off, on, spaceScope, untaggedNowhere, untaggedEverywhere,
+        existing: [...existing], backfill, backfilled, gc, afterGc,
+      };
       `,
-      [work, personal, `http://127.0.0.1:${port}/untagged-page`]
+      [work, personal, `http://127.0.0.1:${port}/untagged-page`, workUrl]
     );
     const untaggedUrl = `http://127.0.0.1:${port}/untagged-page`;
     check("with the enabled pref off, the work URL shows in Personal again", hasUrl(prefToggle.off, workUrl));
@@ -446,6 +512,9 @@ async function main() {
     check("an untagged history page is hidden when untaggedVisibility is nowhere", !hasUrl(prefToggle.untaggedNowhere, untaggedUrl));
     check("an untagged history page shows when untaggedVisibility is everywhere", hasUrl(prefToggle.untaggedEverywhere, untaggedUrl));
 
+    check("the Places lookup used by the weekly cleanup finds a visited URL and not an unvisited one", prefToggle.existing.length === 1 && prefToggle.existing[0] === workUrl, JSON.stringify(prefToggle.existing));
+    check("backfill tags an untagged history page into the chosen container", prefToggle.backfill.tagged >= 1 && prefToggle.backfilled.length === 1 && prefToggle.backfilled[0].userContextId === work, JSON.stringify(prefToggle.backfill));
+    check("running the cleanup against real Places keeps the tags of pages that are still in history", !!prefToggle.gc && prefToggle.afterGc.length === 1, JSON.stringify(prefToggle.gc));
     const lateUrl = `http://127.0.0.1:${port}/late-visit`;
     const beforeQuit = await run(
       browser.client,
@@ -491,11 +560,33 @@ async function main() {
       const out = {};
       const { FormHistory } = ChromeUtils.importESModule("resource://gre/modules/FormHistory.sys.mjs");
       await FormHistory.update({ op: "remove", fieldname: "searchbar-history", value: "alpha zebra" });
-      await until(() => PerSpaceHistory.explain("alpha zebra").term.length === 0, "form-history removal cleanup");
+      await sleep(3000);
+      out.termWhilePageRemains = PerSpaceHistory.explain("alpha zebra").term;
+      await PlacesUtils.history.remove(args[7] + "alpha+zebra");
+      await until(() => PerSpaceHistory.explain("alpha zebra").term.length === 0, "term cleanup after its page and form-history entry are gone");
       out.termsAfterFormRemoval = {
         alpha: PerSpaceHistory.explain("alpha zebra").term,
         bravo: PerSpaceHistory.explain("bravo yak").term,
       };
+
+      const reloadUrl = args[6];
+      const reloadTab = gBrowser.addTab(reloadUrl, {
+        userContextId: work,
+        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+      });
+      const reloadBrowser = reloadTab.linkedBrowser;
+      await until(() => reloadBrowser.currentURI && reloadBrowser.currentURI.spec === reloadUrl && !reloadBrowser.webProgress.isLoadingDocument, "load of reload page");
+      await until(() => PlacesUtils.history.fetch(reloadUrl), "Places visit of reload page");
+      await until(() => PerSpaceHistory.explain(reloadUrl).page.length === 1, "tag of reload page");
+      await PlacesUtils.history.remove(reloadUrl);
+      await until(() => PerSpaceHistory.explain(reloadUrl).page.length === 0, "tag removal of reload page");
+      reloadBrowser.reload();
+      await sleep(2500);
+      out.reload = {
+        inPlaces: !!(await PlacesUtils.history.fetch(reloadUrl)),
+        tagged: PerSpaceHistory.explain(reloadUrl).page.length > 0,
+      };
+      gBrowser.removeTab(reloadTab);
 
       const bookmarkedUrl = args[5];
       await visit(bookmarkedUrl, work);
@@ -532,9 +623,11 @@ async function main() {
       out.exported = JSON.parse(await PerSpaceHistory.exportJSON());
       return out;
       `,
-      [workUrl, personalUrl, sharedUrl, work, personal, `http://127.0.0.1:${port}/bookmarked-page`]
+      [workUrl, personalUrl, sharedUrl, work, personal, `http://127.0.0.1:${port}/bookmarked-page`, `http://127.0.0.1:${port}/reload-page`, `http://psh-search.test:${port}/search?q=`]
     );
-    check("removing a search from form history removes its term tag and keeps other terms", cleanup.termsAfterFormRemoval.alpha.length === 0 && cleanup.termsAfterFormRemoval.bravo.length === 1, JSON.stringify(cleanup.termsAfterFormRemoval));
+    check("a search removed from form history keeps its tag while its results page is still in history", cleanup.termWhilePageRemains.length === 1);
+    check("reloading a page after forgetting it does not write its tag back unless Places recorded a visit", cleanup.reload.tagged === cleanup.reload.inPlaces, JSON.stringify(cleanup.reload));
+    check("once the results page is forgotten too, the term tag is removed and other terms are kept", cleanup.termsAfterFormRemoval.alpha.length === 0 && cleanup.termsAfterFormRemoval.bravo.length === 1, JSON.stringify(cleanup.termsAfterFormRemoval));
     check("removing all visits of a bookmarked page removes its tag while the bookmark still shows everywhere", cleanup.bookmarkedAfterRemove.length === 0 && cleanup.bookmarkedStillSuggested);
     check("forgetting a page in Places removes its tags", cleanup.afterRemove.length === 0);
     check("forgetting a site's last page removes the site's origin tags", Object.values(cleanup.personalOriginBefore).every((scopes) => scopes.length === 1) && Object.values(cleanup.personalOriginAfter).every((scopes) => scopes.length === 0), JSON.stringify(cleanup.personalOriginAfter));

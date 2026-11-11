@@ -245,6 +245,48 @@ test("in space scope with noContainerOnly, keeps an untagged page only when the 
   assert.equal(drop(filter, makeContext({ userContextId: 3 }), makeHistoryResult(WORK_URL)), true);
 });
 
+test("in space scope, a page visited in a tab with no Space (an Essential) shows in every Space", () => {
+  const { filter, store } = makeFilter({
+    config: { scope: "space" },
+    windowInfo: { userContextId: 0, spaceId: "space-b" },
+  });
+  store.add("page", WORK_URL, 0, "");
+  assert.equal(drop(filter, makeContext({ userContextId: 0 }), makeHistoryResult(WORK_URL)), false);
+});
+
+test("in container scope, a page visited in a tab with no Space is still filtered by container", () => {
+  const { filter, store } = makeFilter();
+  store.add("page", WORK_URL, 1, "");
+  assert.equal(drop(filter, makeContext({ userContextId: 2 }), makeHistoryResult(WORK_URL)), true);
+});
+
+test("drops a typed-URL heuristic result when its https://www. variant was visited only in another container", () => {
+  const { filter, store } = makeFilter();
+  store.add("page", "https://www.example.com/x", 1, "");
+  const heuristic = makeHistoryResult("http://example.com/x", { heuristic: true });
+  assert.equal(drop(filter, makeContext({ userContextId: 2 }), heuristic), true);
+});
+
+test("keeps a typed-URL heuristic result when its https://www. variant was visited in the current container", () => {
+  const { filter, store } = makeFilter({ config: { untaggedVisibility: "nowhere" } });
+  store.add("page", "https://www.example.com/x", 1, "");
+  const heuristic = makeHistoryResult("http://example.com/x", { heuristic: true });
+  assert.equal(drop(filter, makeContext({ userContextId: 1 }), heuristic), false);
+});
+
+test("a non-heuristic history row is matched on its exact URL only, not on scheme or www variants", () => {
+  const { filter, store } = makeFilter();
+  store.add("page", "https://www.example.com/x", 1, "");
+  assert.equal(drop(filter, makeContext({ userContextId: 2 }), makeHistoryResult("http://example.com/x")), false);
+});
+
+test("drops a past search that Places restyled from a history page when the term was searched only in another container", () => {
+  const { filter, store } = makeFilter();
+  store.add("term", "medical thing", 1, "");
+  const restyled = makeSearchHistoryResult({ engine: "Google", suggestion: "Medical Thing", lowerCaseSuggestion: "medical thing" });
+  assert.equal(filter.shouldDrop(makeContext({ userContextId: 2 }), { name: "UrlbarProviderPlaces" }, restyled), true);
+});
+
 test("classify labels each result kind the filter distinguishes", () => {
   const { filter } = makeFilter();
   assert.equal(filter.classify(makeHistoryResult(WORK_URL)).kind, "page");

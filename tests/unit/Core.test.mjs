@@ -320,12 +320,119 @@ test("term tags are left alone when form history cannot be read", async () => {
   assert.equal(mod.explain("alpha zebra").term.length, 1);
 });
 
-test("recordSearch records nothing while form history (browser.formfill.enable) is off", async () => {
+test("a form-history removal keeps a term that a tagged search results page still backs", async () => {
   const { mod, control } = await makeRunningMod();
-  control.state.formHistoryEnabled = false;
   mod.recordVisit({ url: "https://search.example/?q=alpha+zebra", userContextId: 1, spaceId: "" });
-  assert.equal(mod.stats().terms, 0);
-  assert.equal(mod.stats().pages, 1);
+  control.state.formHistoryTerms = [];
+  control.state.formHistoryRemoved();
+  await control.fireTimers(2000);
+  await settle();
+  assert.equal(mod.explain("alpha zebra").term.length, 1);
+});
+
+test("removing one of two search results pages for the same term keeps the term tag", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordVisit({ url: "https://search.example/?q=alpha+zebra", userContextId: 1, spaceId: "" });
+  mod.recordVisit({ url: "https://search.example/?q=alpha+zebra&page=2", userContextId: 1, spaceId: "" });
+  control.state.formHistoryTerms = [];
+  control.state.placesHandlers.onPageRemoved("https://search.example/?q=alpha+zebra");
+  await settle();
+  await control.fireTimers(2000);
+  await settle();
+  assert.equal(mod.explain("alpha zebra").term.length, 1);
+});
+
+test("removing a term's only search page from one container removes that container's term tag and keeps the other container's", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordVisit({ url: "https://search.example/?q=alpha+zebra", userContextId: 1, spaceId: "" });
+  mod.recordVisit({ url: "https://search.example/?q=alpha+zebra&src=b", userContextId: 2, spaceId: "" });
+  control.state.formHistoryTerms = [];
+  control.state.placesHandlers.onPageRemoved("https://search.example/?q=alpha+zebra");
+  await settle();
+  await control.fireTimers(2000);
+  await settle();
+  assert.deepEqual(mod.explain("alpha zebra").term, [{ userContextId: 2, spaceId: "" }]);
+});
+
+test("a search results visit is tagged with its term whether or not form history is enabled, so restyled past searches can be filtered", async () => {
+  const { mod, urlbar } = await makeRunningMod();
+  mod.recordVisit({ url: "https://search.example/?q=medical+thing", userContextId: 1, spaceId: "" });
+  const restyled = { type: RESULT_TYPE.SEARCH, source: RESULT_SOURCE.HISTORY, payload: { suggestion: "medical thing", lowerCaseSuggestion: "medical thing" } };
+  assert.equal(addThroughQuery(urlbar, { userContextId: 2 }, restyled, { name: "UrlbarProviderPlaces" }).added.length, 0);
+  assert.equal(addThroughQuery(urlbar, { userContextId: 1 }, restyled, { name: "UrlbarProviderPlaces" }).added.length, 1);
+});
+
+test("the scope for a query is read from the window that query's controller belongs to", async () => {
+  const { mod, control, urlbar } = await makeRunningMod({ prefs: { scope: "space" } });
+  mod.recordVisit({ url: WORK_URL, userContextId: 1, spaceId: "space-a" });
+  const query = new urlbar.Query({ userContextId: 1 });
+  query.controller = { browserWindow: { name: "second window" } };
+  query.add(PROVIDER, makeHistoryResult(WORK_URL));
+  assert.equal(control.state.windowLookups.at(-1), query);
+});
+
+test("a query typed from Zen's empty tab is filtered by the Space's container instead of container 0", async () => {
+  const { mod, control, urlbar } = await makeRunningMod();
+  mod.recordVisit({ url: WORK_URL, userContextId: 4, spaceId: "space-a" });
+  mod.recordVisit({ url: "https://personal.example/", userContextId: 0, spaceId: "space-b" });
+  control.state.activeInfo = { userContextId: 0, spaceId: "space-a", emptyTab: true, spaceContainerId: 4 };
+  assert.equal(addThroughQuery(urlbar, { userContextId: 0 }, makeHistoryResult(WORK_URL)).added.length, 1);
+  assert.equal(addThroughQuery(urlbar, { userContextId: 0 }, makeHistoryResult("https://personal.example/")).added.length, 0);
+});
+
+test("a back, forward, reload or restored load is tagged only when Places still has the URL", async () => {
+  const { mod, control } = await makeRunningMod();
+  control.state.existingUrls = new Set(["https://kept.example/"]);
+  mod.recordVisit({ url: "https://kept.example/", userContextId: 1, spaceId: "", revisit: true });
+  mod.recordVisit({ url: "https://cleared.example/", userContextId: 1, spaceId: "", revisit: true });
+  await settle();
+  assert.equal(mod.explain("https://kept.example/").page.length, 1);
+  assert.deepEqual(mod.explain("https://cleared.example/").page, []);
+});
+
+test("a history-cleared event also deletes quarantined copies of the tag database", async () => {
+  const { control } = await makeRunningMod();
+  control.state.placesHandlers.onHistoryCleared();
+  await settle();
+  assert.equal(control.state.quarantineRemovals, 1);
+});
+
+test("a page-removed event that arrives while the index is loading still removes the tag once loading finishes", async () => {
+  const sharedConnection = new FakeConnection();
+  const first = await makeRunningMod({ sharedConnection });
+  first.mod.recordVisit({ url: WORK_URL, userContextId: 1, spaceId: "" });
+  await first.mod.shutdown();
+  const { compat, control } = makeFakeCompat({ sharedConnection });
+  const mod = createPerSpaceHistory(compat);
+  const loading = mod.init();
+  control.state.placesHandlers.onPageRemoved(WORK_URL);
+  await loading;
+  await settle();
+  assert.deepEqual(mod.explain(WORK_URL).page, []);
+});
+
+test("init, shutdown and init again without waiting ends ready, patched and backed by an open database", async () => {
+  const { compat, control } = makeFakeCompat();
+  const mod = createPerSpaceHistory(compat);
+  mod.init();
+  mod.shutdown();
+  await mod.init();
+  await settle();
+  const stats = mod.stats();
+  assert.deepEqual({ ready: stats.ready, patched: stats.patched, persistent: stats.persistent }, { ready: true, patched: true, persistent: true });
+  assert.equal(control.connection().closed, false);
+});
+
+test("a notice raised before any browser window exists is shown when the first window attaches", async () => {
+  const urlbar = { ...makeFakeUrlbar(), Query: undefined };
+  const { compat, control } = makeFakeCompat({ urlbar });
+  control.state.noticeVisible = false;
+  const mod = createPerSpaceHistory(compat);
+  await mod.init();
+  assert.deepEqual(control.state.notifications, []);
+  control.state.noticeVisible = true;
+  mod.attachWindow(makeFakeWindow());
+  assert.deepEqual(control.state.notifications, ["Per-Space History is inactive on this browser version"]);
 });
 
 test("gc deletes origin tags that no tagged page backs any more and keeps backed ones", async () => {
@@ -384,8 +491,8 @@ test("a Space that disappears from every window's Space list has its tags delete
   const window = makeFakeWindow({ spaces: ["space-a", "space-b"] });
   mod.attachWindow(window);
   mod.recordVisit({ url: WORK_URL, userContextId: 2, spaceId: "space-b", time: 5000 });
-  window.spaces = ["space-a"];
   window.handlers.onSpacesChanged();
+  window.spaces = ["space-a"];
   assert.equal(mod.explain(WORK_URL).page.length, 1);
   await control.fireTimers(2000);
   await settle();
@@ -399,8 +506,8 @@ test("a Space still listed by another window keeps its tags when one window stop
   mod.attachWindow(first);
   mod.attachWindow(second);
   mod.recordVisit({ url: WORK_URL, userContextId: 2, spaceId: "space-b" });
-  first.spaces = ["space-a"];
   first.handlers.onSpacesChanged();
+  first.spaces = ["space-a"];
   await control.fireTimers(2000);
   await settle();
   assert.equal(mod.explain(WORK_URL).page.length, 1);
@@ -411,8 +518,8 @@ test("an empty Space list is treated as not-yet-loaded and deletes no tags", asy
   const window = makeFakeWindow({ spaces: ["space-a", "space-b"] });
   mod.attachWindow(window);
   mod.recordVisit({ url: WORK_URL, userContextId: 2, spaceId: "space-b" });
-  window.spaces = [];
   window.handlers.onSpacesChanged();
+  window.spaces = [];
   await control.fireTimers(2000);
   await settle();
   assert.equal(mod.explain(WORK_URL).page.length, 1);
@@ -438,14 +545,22 @@ test("gc leaves a page tagged within the last hour alone even when Places does n
   assert.equal(mod.explain("https://fresh.example/").page.length, 1);
 });
 
-test("gc drops search terms older than browser.formfill.expire_days and keeps newer ones", async () => {
+test("gc keeps a search term of any age while a tagged search results page still backs it", async () => {
   const { mod, control } = await makeRunningMod();
   const day = 24 * 60 * 60 * 1000;
-  mod.recordSearch({ term: "old term", userContextId: 1, spaceId: "", time: control.state.now - 181 * day });
-  mod.recordSearch({ term: "new term", userContextId: 1, spaceId: "", time: control.state.now - 10 * day });
+  mod.recordVisit({ url: "https://search.example/?q=old+term", userContextId: 1, spaceId: "", time: control.state.now - 400 * day });
+  control.state.formHistoryTerms = [];
   await mod.gc();
-  assert.deepEqual(mod.explain("old term").term, []);
-  assert.equal(mod.explain("new term").term.length, 1);
+  assert.equal(mod.explain("old term").term.length, 1);
+});
+
+test("gc deletes a term tag that neither a tagged page nor form history backs", async () => {
+  const { mod, control } = await makeRunningMod();
+  mod.recordSearch({ term: "orphan term", userContextId: 1, spaceId: "" });
+  control.state.formHistoryTerms = [];
+  const summary = await mod.gc();
+  assert.equal(summary.termsRemoved, 1);
+  assert.deepEqual(mod.explain("orphan term").term, []);
 });
 
 test("the idle observer is registered for 300 seconds and runs gc when the last gc was over a week ago", async () => {
@@ -478,6 +593,14 @@ test("an unreadable database is moved aside, the user is notified once, and the 
   assert.equal(mod.stats().persistent, true);
 });
 
+test("an open failure that is not corruption or a lock leaves the database file in place and runs from memory only", async () => {
+  const { mod, control } = await makeRunningMod({ openFailures: 1, openError: "Sqlite.sys.mjs has been shutdown" });
+  assert.deepEqual(control.state.quarantined, []);
+  assert.deepEqual(control.state.notifications, []);
+  assert.equal(mod.stats().ready, true);
+  assert.equal(mod.stats().persistent, false);
+});
+
 test("when the database cannot be opened even after moving it aside the mod runs from memory only", async () => {
   const { mod, urlbar } = await makeRunningMod({ openFailures: 2 });
   mod.recordVisit({ url: WORK_URL, userContextId: 1, spaceId: "" });
@@ -504,6 +627,7 @@ test("the profileBeforeChange blocker flushes pending tags to SQLite before clos
   mod.recordVisit({ url: WORK_URL, userContextId: 1, spaceId: "", time: 5000 });
   await control.state.blockers[0].callback();
   assert.equal(sharedConnection.rows("SELECT COUNT(*) AS n FROM page_tags")[0].n, 1);
+  assert.equal(control.state.blockerRemovals, 0);
 });
 
 test("the mod shuts down when its last window script is unloaded while browser windows stay open", async () => {

@@ -41,12 +41,12 @@ export function makeFilter({ store = makeStore(), config = {}, ready = true, win
   const fullConfig = { ...DEFAULT_CONFIG, ...config };
   const resolver = createScopeResolver({
     getConfig: () => fullConfig,
-    getActiveWindowInfo: () => windowInfo,
+    getWindowInfo: () => windowInfo,
   });
   const filter = createFilter({
     getStore: () => store,
     getConfig: () => fullConfig,
-    resolveScope: (context) => resolver.current(context),
+    resolveScope: (context, owner) => resolver.current(context, owner),
     isReady: () => ready,
     RESULT_SOURCE,
     RESULT_TYPE,

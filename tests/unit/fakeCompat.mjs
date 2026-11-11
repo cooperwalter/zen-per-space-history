@@ -37,19 +37,21 @@ export function makeFakeCompat(options = {}) {
     urlbar,
     now: options.now ?? 1_000_000_000_000,
     historyEnabled: true,
-    formHistoryEnabled: true,
     formHistoryTerms: null,
     formHistoryRemoved: null,
-    expireDays: 180,
     connections: [],
     openFailures: options.openFailures ?? 0,
     quarantined: [],
+    quarantineRemovals: 0,
+    noticeVisible: true,
+    windowLookups: [],
     notifications: [],
     placesHandlers: null,
     containerDeleted: null,
     idleCallback: null,
     idleSeconds: null,
     blockers: [],
+    blockerRemovals: 0,
     existingUrls: null,
     visitedPages: [],
     searchEngines: { "search.example": "q" },
@@ -85,15 +87,13 @@ export function makeFakeCompat(options = {}) {
         };
       },
       historyEnabled: () => state.historyEnabled,
-      formHistoryEnabled: () => state.formHistoryEnabled,
-      formHistoryExpireDays: () => state.expireDays,
     },
     db: {
       path: () => "/profile/per-space-history.sqlite",
       async open() {
         if (state.openFailures > 0) {
           state.openFailures--;
-          throw new Error("file is not a database");
+          throw new Error(options.openError ?? "file is not a database");
         }
         const conn = options.sharedConnection ?? new FakeConnection();
         if (options.sharedConnection) {
@@ -104,9 +104,13 @@ export function makeFakeCompat(options = {}) {
         state.connections.push(conn);
         return conn;
       },
+      shouldQuarantine: (error) => /not a database|corrupt|locked/.test(error.message),
       async quarantine(path) {
         state.quarantined.push(path);
         return `${path}.corrupt`;
+      },
+      async removeQuarantined() {
+        state.quarantineRemovals++;
       },
     },
     timers: {
@@ -177,6 +181,7 @@ export function makeFakeCompat(options = {}) {
       addBlocker(name, callback) {
         state.blockers.push({ name, callback });
         return () => {
+          state.blockerRemovals++;
           state.blockers = state.blockers.filter((blocker) => blocker.callback !== callback);
         };
       },
@@ -193,12 +198,19 @@ export function makeFakeCompat(options = {}) {
           window.detached = true;
         };
       },
-      activeInfo: () => state.activeInfo,
+      info(owner) {
+        state.windowLookups.push(owner);
+        return state.activeInfo;
+      },
       spaceIds: (window) => window.spaces,
       openBrowserWindows: () => state.openWindows,
     },
     notify(message) {
+      if (!state.noticeVisible) {
+        return false;
+      }
       state.notifications.push(message);
+      return true;
     },
     now: () => state.now,
   };

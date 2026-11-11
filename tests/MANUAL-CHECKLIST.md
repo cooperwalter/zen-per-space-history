@@ -25,13 +25,15 @@ Items marked **(auto)** are also covered by `npm run test:browser` in container 
 - [ ] Mirror the three items above in B.
 - [ ] **(auto)** Autofill: in A, typing "example.n" doesn't autofill `example.net`. Enter still navigates, with no delay.
 - [ ] **(auto)** Visit the same URL in both Spaces; it appears in both.
+- [ ] **(auto)** In A, close every unpinned tab so Zen shows its empty state, then type "work": the work URL is suggested and B's pages are not.
+- [ ] **(auto)** In B, type `@` plus your search engine's keyword, then "alp": "alpha zebra" is not suggested.
 
 ## Cleanup
 
 - [ ] **(auto)** Forget the personal URL from the History sidebar; `PerSpaceHistory.explain(url)` shows no tags.
 - [ ] **(auto)** Clear all history; `PerSpaceHistory.stats()` shows 0 pages, origins and terms.
 - [ ] **(auto)** Delete container "Personal"; its tags are gone.
-- [ ] Delete a Space; about two seconds later its tags are gone.
+- [ ] Delete a Space; about two seconds later `PerSpaceHistory.stats().scopes` no longer lists it.
 
 ## Lifecycle
 
