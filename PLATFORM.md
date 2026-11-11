@@ -5,7 +5,7 @@ Checked on 2026-11-11 against the Zen build installed on this Mac: **Zen 1.24.1b
 Two methods were used:
 
 - **Source**: reading the JavaScript shipped inside `/Applications/Zen.app` (`omni.ja` and `browser/omni.ja`).
-- **Live**: `npm run test:browser`, which starts this Zen build headless on a throwaway profile, loads the mod, and runs 43 checks through the real address-bar code. Zen's own Browser Console was not used, because Zen was running under the everyday profile at the time.
+- **Live**: `npm run test:browser`, which starts this Zen build headless on a throwaway profile, loads the mod, and runs 46 checks through the real address-bar code. Zen's own Browser Console was not used, because Zen was running under the everyday profile at the time.
 
 Sine is not installed on this Mac, so the Sine rows were checked against Sine's source only (`CosmoCreeper/Sine` at `fb0bd4c`, 2026-09-01). **Loading through Sine itself has not been run.**
 

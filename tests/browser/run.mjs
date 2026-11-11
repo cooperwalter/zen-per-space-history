@@ -446,7 +446,21 @@ async function main() {
     check("an untagged history page is hidden when untaggedVisibility is nowhere", !hasUrl(prefToggle.untaggedNowhere, untaggedUrl));
     check("an untagged history page shows when untaggedVisibility is everywhere", hasUrl(prefToggle.untaggedEverywhere, untaggedUrl));
 
-    await run(browser.client, `await mod().exportJSON();`);
+    const lateUrl = `http://127.0.0.1:${port}/late-visit`;
+    const beforeQuit = await run(
+      browser.client,
+      `
+      await mod().exportJSON();
+      await visit(args[0], args[1]);
+      const compatModule = ChromeUtils.importESModule("chrome://sine/content/per-space-history/lib/GeckoCompat.sys.mjs");
+      compatModule.notify("Per-Space History harness notice");
+      await until(() => window.gNotificationBox.getNotificationWithValue("per-space-history-notice"), "notification bar");
+      return { pendingWrites: mod().stats().pendingWrites, noticeShown: true };
+      `,
+      [lateUrl, work]
+    );
+    check("a user notice is shown as a notification bar in the browser window", beforeQuit.noticeShown);
+    check("the visit made just before quitting is still waiting in the write queue", beforeQuit.pendingWrites > 0, `pendingWrites=${beforeQuit.pendingWrites}`);
     await quit(browser);
     browser = null;
 
@@ -457,13 +471,15 @@ async function main() {
       `
       const [workUrl, work, personal] = args;
       return {
+        late: mod().explain(args[3]).page,
         explain: mod().explain(workUrl).page,
         workInWork: await query("work-only", work),
         workInPersonal: await query("work-only", personal),
       };
       `,
-      [workUrl, work, personal]
+      [workUrl, work, personal, lateUrl]
     );
+    check("queued tags are flushed to SQLite during browser shutdown", afterRestart.late.length === 1 && afterRestart.late[0].userContextId === work, JSON.stringify(afterRestart.late));
     check("tags persist across a browser restart", reloaded.stats.pages >= 3 && afterRestart.explain.length === 1 && afterRestart.explain[0].userContextId === work, `pages=${reloaded.stats.pages}`);
     check("filtering works after a restart", hasUrl(afterRestart.workInWork, workUrl) && !hasUrl(afterRestart.workInPersonal, workUrl));
 
