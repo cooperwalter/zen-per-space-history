@@ -1,0 +1,8 @@
+node_modules/
+.firecrawl/
+.superpowers/
+tests/browser/.profile/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store

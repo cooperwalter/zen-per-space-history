@@ -1,0 +1,69 @@
+[
+  {
+    "type": "checkbox",
+    "property": "zen.perSpaceHistory.enabled",
+    "label": "Filter the address bar by container / Space",
+    "defaultValue": true
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.perSpaceHistory.scope",
+    "label": "What counts as the same place",
+    "defaultValue": "container",
+    "placeholder": false,
+    "options": [
+      { "value": "container", "label": "The tab's container" },
+      { "value": "space", "label": "The window's active Space" }
+    ]
+  },
+  {
+    "type": "dropdown",
+    "property": "zen.perSpaceHistory.untaggedVisibility",
+    "label": "History with no tags (from before install, or from Sync) appears",
+    "defaultValue": "everywhere",
+    "placeholder": false,
+    "options": [
+      { "value": "everywhere", "label": "Everywhere" },
+      { "value": "noContainerOnly", "label": "Only in tabs with no container" },
+      { "value": "nowhere", "label": "Nowhere" }
+    ]
+  },
+  {
+    "type": "separator",
+    "label": "What gets filtered"
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.perSpaceHistory.filterHistory",
+    "label": "History pages",
+    "defaultValue": true
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.perSpaceHistory.filterAutofill",
+    "label": "URL autofill (turn off if autofill feels broken)",
+    "defaultValue": true
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.perSpaceHistory.filterSearchHistory",
+    "label": "Past search terms",
+    "defaultValue": true
+  },
+  {
+    "type": "separator",
+    "label": "Debugging"
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.perSpaceHistory.tagging",
+    "label": "Record new visits (turn off only to debug)",
+    "defaultValue": true
+  },
+  {
+    "type": "checkbox",
+    "property": "zen.perSpaceHistory.debug",
+    "label": "Verbose logging in the Browser Console",
+    "defaultValue": false
+  }
+]

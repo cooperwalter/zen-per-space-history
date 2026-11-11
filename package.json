@@ -1,0 +1,12 @@
+{
+  "name": "zen-per-space-history",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zen mod: separate address-bar history per container / Space",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs",
+    "bench": "node --expose-gc tests/bench.mjs",
+    "test:browser": "node tests/browser/run.mjs"
+  }
+}

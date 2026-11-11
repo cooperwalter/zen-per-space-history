@@ -1,0 +1,14 @@
+{
+  "id": "per-space-history",
+  "name": "Per-Space History",
+  "description": "Separate address-bar history per container / Space",
+  "version": "0.1.0",
+  "author": "cooperwalter",
+  "homepage": "https://github.com/cooperwalter/zen-per-space-history",
+  "preferences": "preferences.json",
+  "supportsUnload": true,
+  "scripts": {
+    "PerSpaceHistory.sys.mjs": {},
+    "per-space-history.uc.js": { "include": ["chrome://browser/content/browser.xhtml"] }
+  }
+}
